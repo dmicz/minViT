@@ -1,0 +1,5 @@
+__pycache__/
+data/cifar-10/cifar-10-batches-py
+*.bin
+*.gz
+.vscode
