@@ -79,16 +79,19 @@ class SelfAttention(nn.Module):
 class Block(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.ln = LayerNorm(config.n_embd, config.bias)
+        self.ln_1 = LayerNorm(config.n_embd, config.bias)
         self.attn = SelfAttention(config)
+        self.ln_2 = LayerNorm(config.n_embd, config.bias)
         self.mlp = MLP(config)
 
     def forward(self, x):
-        y = self.ln(x)
+        y = self.ln_1(x)
         y = self.attn(y)
-        y = self.mlp(y)
-
         x += y
+        y = self.ln_2(x)
+        y = self.mlp(y)
+        x += y
+        
         return x
 
 

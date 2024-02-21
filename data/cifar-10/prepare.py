@@ -10,10 +10,10 @@ transform = transforms.Compose([
 train_dataset = datasets.CIFAR10(root='./data/cifar-10', train=True, download=True, transform=transform)
 test_dataset = datasets.CIFAR10(root='./data/cifar-10', train=False, download=True, transform=transform)
 
-train_images = np.array([train_dataset.data[i].numpy() for i in range(len(train_dataset))])
-train_labels = np.array([train_dataset.targets[i] for i in range(len(train_dataset))], dtype=np.int64)
-test_images = np.array([test_dataset.data[i].numpy() for i in range(len(test_dataset))])
-test_labels = np.array([test_dataset.targets[i] for i in range(len(test_dataset))], dtype=np.int64)
+train_images = np.array([train_dataset[i][0].numpy() for i in range(len(train_dataset))])
+train_labels = np.array([train_dataset[i][1] for i in range(len(train_dataset))], dtype=np.int64)
+test_images = np.array([test_dataset[i][0].numpy() for i in range(len(test_dataset))])
+test_labels = np.array([test_dataset[i][1] for i in range(len(test_dataset))], dtype=np.int64)
 
 
 train_images.tofile(os.path.join(os.path.dirname(__file__), 'train-images.bin'))
