@@ -18,6 +18,10 @@ class ViTConfig:
     dropout: float = 0.0
     bias: bool = False
     n_embd: int = 768
+    
+class PatchEmbedding(nn.Module):
+    def __init__(self, config):
+        super().__init__()
 
 # replace eventually with nn.LayerNorm
 class LayerNorm(nn.Module):
@@ -91,7 +95,7 @@ class Block(nn.Module):
         y = self.ln_2(x)
         y = self.mlp(y)
         x += y
-        
+
         return x
 
 
