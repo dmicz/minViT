@@ -19,9 +19,36 @@ class ViTConfig:
     bias: bool = False
     n_embd: int = 768
     
+# standard patch embedding, implement other module for Conv2d type embedding
 class PatchEmbedding(nn.Module):
-    def __init__(self, config):
+    def __init__(self, img_size = 32, patch_size = 4, in_chans = 3, embed_dim = 768):
         super().__init__()
+        self.img_size   = img_size
+        self.patch_size = patch_size    # P
+        self.in_chans   = in_chans      # C
+        self.embed_dim  = embed_dim     # D
+
+        self.num_patches = (img_size // patch_size) ** 2        # N = H*W/P^2
+        self.flatten_dim = patch_size * patch_size * in_chans   # P^2*C
+        
+        self.proj = nn.Linear(self.flatten_dim, embed_dim) # (P^2*C,D)
+
+        self.position_embed = nn.Parameter(torch.zeros(1, 1 + self.num_patches, embed_dim))
+        self.class_embed    = nn.Parameter(torch.zeros(1, 1, embed_dim))
+
+    def forward(self, x):
+        B, C, H, W = x.shape
+        x = x.unfold(2, self.patch_size, self.patch_size).unfold(3, self.patch_size, self.patch_size)
+        x = x.contiguous().view(B, C, self.num_patches, -1)
+        x = x.permute(0, 2, 1, 3).reshape(B, self.num_patches, -1)
+
+        x = self.proj(x)
+
+        cls_emb = self.class_embed.expand(B, -1, -1)
+        x = torch.cat((cls_emb, x), dim = 1)
+
+        x = x + self.position_embed
+        return x
 
 # replace eventually with nn.LayerNorm
 class LayerNorm(nn.Module):
