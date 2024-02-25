@@ -20,10 +20,8 @@ def get_batch(split, batch_size):
     image_data, label_data = (train_images, train_labels) if split == 'train' else (test_images, test_labels)
     ix = torch.randint(len(image_data) // block_size, (batch_size,))
 
-    x = torch.stack([torch.from_numpy(image_data[i*block_size:(i+1)*block_size].reshape(3, 32, 32)) for i in ix.numpy()])
+    x = torch.stack([torch.from_numpy(np.copy(image_data[i*block_size:(i+1)*block_size].reshape(3, 32, 32))) for i in ix.numpy()])
     y = torch.from_numpy(label_data[ix.numpy()])
-#    x = torch.stack([torch.from_numpy(image_data[i:i+block_size].astype(np.float32)) for i in ix])
-#    y = torch.tensor([torch.from_numpy(label_data[i:i+block_size].astype(np.int64)) for i in ix])
 
     if device_type == 'cuda':
         x = x.pin_memory().to(device, non_blocking=True)
@@ -49,24 +47,22 @@ epochs = 10
 for epoch in range(epochs):
     model.train()
     running_loss = 0.0
-    for _ in range(len(train_images) // batch_size):
+    for _ in range(len(train_images) // block_size // batch_size):
         inputs, labels = get_batch('train', batch_size)
         
-        # Reset the gradients
         optimizer.zero_grad()
 
-        # Forward pass: Compute predicted y by passing x to the model
         logits, loss = model(inputs, targets=labels)
 
-        # Backward pass: Compute gradient of the loss with respect to model parameters
         loss.backward()
 
-        # Calling the step function on an Optimizer makes an update to its parameters
         optimizer.step()
 
         running_loss += loss.item()
 
+        if _ % 10 == 0: print(f"{_}/{len(train_images) // block_size // batch_size}")
+
     # Print statistics
-    print(f'Epoch {epoch+1}, Loss: {running_loss / (len(train_images) // batch_size)}')
+    print(f'Epoch {epoch+1}, Loss: {running_loss / (len(train_images) // block_size // batch_size)}')
 
 print('Finished Training')

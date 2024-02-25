@@ -12,29 +12,29 @@ class ViTConfig:
     patch_size: int = 4
     in_channels: int = 3
     num_classes: int = 10
-    num_heads: int = 6
-    num_layers: int = 6
-    mlp_dim: int = 3072
+    num_heads: int = 12
+    num_layers: int = 9
+    mlp_dim: int = 384
     dropout: float = 0.0
     bias: bool = False
-    n_embd: int = 768
+    n_embd: int = 192
     
 # standard patch embedding, implement other module for Conv2d type embedding
 class PatchEmbedding(nn.Module):
-    def __init__(self, img_size = 32, patch_size = 4, in_chans = 3, embed_dim = 768):
+    def __init__(self, config):
         super().__init__()
-        self.img_size   = img_size
-        self.patch_size = patch_size    # P
-        self.in_chans   = in_chans      # C
-        self.embed_dim  = embed_dim     # D
+        self.img_size   = config.img_size
+        self.patch_size = config.patch_size    # P
+        self.in_chans   = config.in_channels      # C
+        self.embed_dim  = config.n_embd     # D
 
-        self.num_patches = (img_size // patch_size) ** 2        # N = H*W/P^2
-        self.flatten_dim = patch_size * patch_size * in_chans   # P^2*C
+        self.num_patches = (self.img_size // self.patch_size) ** 2        # N = H*W/P^2
+        self.flatten_dim = self.patch_size * self.patch_size * self.in_chans   # P^2*C
         
-        self.proj = nn.Linear(self.flatten_dim, embed_dim) # (P^2*C,D)
+        self.proj = nn.Linear(self.flatten_dim, self.embed_dim) # (P^2*C,D)
 
-        self.position_embed = nn.Parameter(torch.zeros(1, 1 + self.num_patches, embed_dim))
-        self.class_embed    = nn.Parameter(torch.zeros(1, 1, embed_dim))
+        self.position_embed = nn.Parameter(torch.zeros(1, 1 + self.num_patches, self.embed_dim))
+        self.class_embed    = nn.Parameter(torch.zeros(1, 1, self.embed_dim))
 
     def forward(self, x):
         B, C, H, W = x.shape
@@ -68,22 +68,22 @@ class MLP(nn.Module):
         return x
 
 class SelfAttention(nn.Module):
-    def __init__(self, embed_dim = 768, num_heads = 4, bias = False, dropout=0.1):
+    def __init__(self, config):
         super().__init__()
-        assert embed_dim % num_heads == 0
+        assert config.n_embd % config.num_heads == 0
 
-        self.embed_dim   = embed_dim
-        self.num_heads   = num_heads
-        self.head_dim    = embed_dim // num_heads
+        self.embed_dim   = config.n_embd
+        self.num_heads   = config.num_heads
+        self.head_dim    = config.n_embd // config.num_heads
 
-        self.query   = nn.Linear(embed_dim, embed_dim, bias=bias)
-        self.key     = nn.Linear(embed_dim, embed_dim, bias=bias)
-        self.value   = nn.Linear(embed_dim, embed_dim, bias=bias)
+        self.query   = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
+        self.key     = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
+        self.value   = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
 
-        self.out     = nn.Linear(embed_dim, embed_dim)
+        self.out     = nn.Linear(config.n_embd, config.n_embd)
 
-        self.attn_dropout = nn.Dropout(dropout)
-        self.resid_dropout = nn.Dropout(dropout)
+        self.attn_dropout = nn.Dropout(config.dropout)
+        self.resid_dropout = nn.Dropout(config.dropout)
 
     def forward(self, x):
         B, N, _ = x.size()
@@ -109,7 +109,7 @@ class Block(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.ln_1 = nn.LayerNorm(config.n_embd, bias=config.bias)
-        self.attn = SelfAttention()
+        self.attn = SelfAttention(config)
         self.ln_2 = nn.LayerNorm(config.n_embd, bias=config.bias)
         self.mlp = MLP(config)
 
@@ -124,7 +124,7 @@ class ViT(nn.Module):
         super().__init__()
 
         self.transformer = nn.ModuleDict(dict(
-            pe = PatchEmbedding(),
+            pe = PatchEmbedding(config),
             drop = nn.Dropout(0.1),
             h = nn.ModuleList([Block(config) for _ in range(config.num_layers)]),
             ln_f = nn.LayerNorm(config.n_embd)
