@@ -12,8 +12,8 @@ class ViTConfig:
     patch_size: int = 4
     in_channels: int = 3
     num_classes: int = 10
-    num_heads: int = 12
-    num_layers: int = 12
+    num_heads: int = 6
+    num_layers: int = 6
     mlp_dim: int = 3072
     dropout: float = 0.0
     bias: bool = False
@@ -50,15 +50,6 @@ class PatchEmbedding(nn.Module):
         x = x + self.position_embed
         return x
 
-# replace eventually with nn.LayerNorm
-class LayerNorm(nn.Module):
-    def __init__(self, ndim, bias):
-        super().__init__()
-        self.weight = nn.Parameter(torch.ones(ndim))
-        self.bias = nn.Parameter(torch.zeros(ndim)) if bias else None
-
-    def forward(self, input):
-        return F.layer_norm(input, self.weight.shape, self.weight, self.bias, 1e-5)
 
 class MLP(nn.Module):
     def __init__(self, config):
@@ -76,70 +67,91 @@ class MLP(nn.Module):
 
         return x
 
-
 class SelfAttention(nn.Module):
-    def __init__(self, config):
+    def __init__(self, embed_dim = 768, num_heads = 4, bias = False, dropout=0.1):
         super().__init__()
-        assert config.n_embd % config.num_heads == 0
+        assert embed_dim % num_heads == 0
 
-        self.c_attn = nn.Linear(config.n_embd, config.n_embd * 3, bias=config.bias)
-        self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
+        self.embed_dim   = embed_dim
+        self.num_heads   = num_heads
+        self.head_dim    = embed_dim // num_heads
 
-        self.attn_dropout = nn.Dropout(config.dropout)
-        self.resid_dropout = nn.Dropout(config.dropout)
-        self.n_head = config.num_heads
-        self.n_embd = config.n_embd
+        self.query   = nn.Linear(embed_dim, embed_dim, bias=bias)
+        self.key     = nn.Linear(embed_dim, embed_dim, bias=bias)
+        self.value   = nn.Linear(embed_dim, embed_dim, bias=bias)
+
+        self.out     = nn.Linear(embed_dim, embed_dim)
+
+        self.attn_dropout = nn.Dropout(dropout)
+        self.resid_dropout = nn.Dropout(dropout)
 
     def forward(self, x):
-        B, N, C = x.size()
+        B, N, _ = x.size()
 
-        q, k, v = self.c_attn(x).split(self.n_embd, dim=2)
-        q = q.view(B, N, self.n_head, C // self.n_head).transpose(1, 2)
-        k = k.view(B, N, self.n_head, C // self.n_head).transpose(1, 2)
-        v = v.view(B, N, self.n_head, C // self.n_head).transpose(1, 2)
+        q = self.query(x).view(B, N, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
+        k = self.key(x).view(B, N, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
+        v = self.value(x).view(B, N, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
 
         # do NOT use causal attention as we are not dealing with sequential data (image patches are unordered)
-        y = torch.nn.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout=self.attn_dropout if self.training else 0, is_causal=False)
+        attn = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(self.head_dim))
+        attn = attn.softmax(dim=-1)
 
-        y = y.transpose(1, 2).contiguous().view(B, N, C)
+        out = (attn @ v).permute(0, 2, 1, 3).contiguous().view(B, N, self.embed_dim)
 
-        y = self.resid_dropout(self.c_proj(y))
-        return y
+        out = self.out(out)
+
+        return out
         
 
+    
 class Block(nn.Module):
+
     def __init__(self, config):
         super().__init__()
-        self.ln_1 = LayerNorm(config.n_embd, config.bias)
-        self.attn = SelfAttention(config)
-        self.ln_2 = LayerNorm(config.n_embd, config.bias)
+        self.ln_1 = nn.LayerNorm(config.n_embd, bias=config.bias)
+        self.attn = SelfAttention()
+        self.ln_2 = nn.LayerNorm(config.n_embd, bias=config.bias)
         self.mlp = MLP(config)
 
     def forward(self, x):
-        y = self.ln_1(x)
-        y = self.attn(y)
-        x += y
-        y = self.ln_2(x)
-        y = self.mlp(y)
-        x += y
-
+        x = x + self.attn(self.ln_1(x))
+        x = x + self.mlp(self.ln_2(x))
         return x
-
+    
 
 class ViT(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.config = config
 
         self.transformer = nn.ModuleDict(dict(
-            token_encoding = nn.Embedding(config.in_channels, config.n_embd),
-            position_encoding = nn.Embedding(),
-            blocks = nn.ModuleList([Block(config) for _ in range(config.num_layers)]),
-            ln_post = LayerNorm(config.n_embd, config.bias)
+            pe = PatchEmbedding(),
+            drop = nn.Dropout(0.1),
+            h = nn.ModuleList([Block(config) for _ in range(config.num_layers)]),
+            ln_f = nn.LayerNorm(config.n_embd)
         ))
 
-         
+        self.head = nn.Linear(config.n_embd, 10, bias=False)
 
-    def forward(self, idx, targets=None):
-        device = idx.device
-        b, t = idx.size()
+        print("number of parameters: %.2fM" % (self.get_num_params()/1e6,))
+
+    def get_num_params(self):
+        n_params = sum(p.numel() for p in self.parameters())
+        return n_params
+
+    def forward(self, x, targets=None):
+        emb = self.transformer.pe(x)
+        x = self.transformer.drop(emb)
+        for block in self.transformer.h:
+            x = block(x)
+        x = self.transformer.ln_f(x)
+
+        class_token = x[:, 0]
+        logits = self.head(class_token)
+
+        if targets is not None:
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
+        else:
+            loss = None
+
+        return logits, loss
+
