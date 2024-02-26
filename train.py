@@ -59,9 +59,6 @@ for epoch in range(epochs):
 
         running_loss += loss.item()
 
-        if _ % 10 == 0: print(f"{_}/{len(train_images) // block_size // batch_size}")
-
-    # Calculate validation loss
     model.eval()
     val_loss = 0.0
     with torch.no_grad():

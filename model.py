@@ -12,12 +12,12 @@ class ViTConfig:
     patch_size: int = 4
     in_channels: int = 3
     num_classes: int = 10
-    num_heads: int = 12
-    num_layers: int = 9
-    mlp_dim: int = 384
-    dropout: float = 0.0
-    bias: bool = False
-    n_embd: int = 192
+    num_heads: int = 4
+    num_layers: int = 8
+    mlp_dim: int = 192
+    dropout: float = 0.1
+    bias: bool = True
+    n_embd: int = 96
     
 # standard patch embedding, implement other module for Conv2d type embedding
 class PatchEmbedding(nn.Module):
@@ -34,7 +34,7 @@ class PatchEmbedding(nn.Module):
         self.proj = nn.Linear(self.flatten_dim, self.embed_dim) # (P^2*C,D)
 
         self.position_embed = nn.Parameter(torch.zeros(1, 1 + self.num_patches, self.embed_dim))
-        self.class_embed    = nn.Parameter(torch.zeros(1, 1, self.embed_dim))
+        self.class_embed    = nn.Parameter(torch.randn(1, 1, self.embed_dim))
 
     def forward(self, x):
         B, C, H, W = x.shape
@@ -49,14 +49,41 @@ class PatchEmbedding(nn.Module):
 
         x = x + self.position_embed
         return x
+    
+class HybridPatchEmbedding(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.img_size   = config.img_size
+        self.patch_size = config.patch_size    # P
+        self.in_chans   = config.in_channels      # C
+        self.embed_dim  = config.n_embd     # D
+
+        self.num_patches = (self.img_size // self.patch_size) ** 2        # N = H*W/P^2
+        self.flatten_dim = self.patch_size * self.patch_size * self.in_chans   # P^2*C
+        
+        self.conv = nn.Conv2d(self.in_chans, self.embed_dim, kernel_size=self.patch_size, stride=self.patch_size)
+
+        self.position_embed = nn.Parameter(torch.zeros(1, 1 + self.num_patches, self.embed_dim))
+        self.class_embed    = nn.Parameter(torch.zeros(1, 1, self.embed_dim))
+
+    def forward(self, x):
+        x = self.conv(x)
+        x = x.reshape([x.shape[0], self.embed_dim, -1])
+        x = x.transpose(1, 2)
+
+        cls_emb = self.class_embed.expand(x.shape[0], -1, -1)
+        x = torch.cat((cls_emb, x), dim = 1)
+
+        x = x + self.position_embed
+        return x
 
 
 class MLP(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.c_fc = nn.Linear(config.n_embd, config.n_embd * 4, bias=config.bias)
+        self.c_fc = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
         self.gelu = nn.GELU()
-        self.c_proj = nn.Linear(config.n_embd * 4, config.n_embd, bias=config.bias)
+        self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
         self.dropout = nn.Dropout(config.dropout)
 
     def forward(self, x):
@@ -83,7 +110,6 @@ class SelfAttention(nn.Module):
         self.out     = nn.Linear(config.n_embd, config.n_embd)
 
         self.attn_dropout = nn.Dropout(config.dropout)
-        self.resid_dropout = nn.Dropout(config.dropout)
 
     def forward(self, x):
         B, N, _ = x.size()
@@ -97,10 +123,10 @@ class SelfAttention(nn.Module):
         attn = attn.softmax(dim=-1)
 
         out = (attn @ v).permute(0, 2, 1, 3).contiguous().view(B, N, self.embed_dim)
+        out = self.attn_dropout(out)
 
-        out = self.out(out)
 
-        return out
+        return self.out(out)
         
 
     
@@ -118,19 +144,33 @@ class Block(nn.Module):
         x = x + self.mlp(self.ln_2(x))
         return x
     
+class ClassificationHead(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.n_embd = config.n_embd
+        self.lin1 = nn.Linear(self.n_embd, self.n_embd * 2, bias=False)
+        self.act = nn.ReLU()
+        self.lin2 = nn.Linear(self.n_embd * 2, config.num_classes, bias=False)
+
+
+    def forward(self, x):
+        x = self.act(self.lin1(x))
+        x = self.lin2(x)
+        return x
+
 
 class ViT(nn.Module):
     def __init__(self, config):
         super().__init__()
 
         self.transformer = nn.ModuleDict(dict(
-            pe = PatchEmbedding(config),
-            drop = nn.Dropout(0.1),
+            pe = HybridPatchEmbedding(config),
+            drop = nn.Dropout(config.dropout),
             h = nn.ModuleList([Block(config) for _ in range(config.num_layers)]),
             ln_f = nn.LayerNorm(config.n_embd)
         ))
 
-        self.head = nn.Linear(config.n_embd, 10, bias=False)
+        self.head = ClassificationHead(config)
 
         print("number of parameters: %.2fM" % (self.get_num_params()/1e6,))
 

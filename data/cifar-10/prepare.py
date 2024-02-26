@@ -3,12 +3,23 @@ import numpy as np
 import torch
 from torchvision import datasets, transforms
 
-transform = transforms.Compose([
-    transforms.ToTensor(),
+mean = [0.4914, 0.4822, 0.4465]
+std = [0.247, 0.243, 0.261]
+
+train_transform = transforms.Compose([
+    transforms.RandomCrop(32, padding=4),
+    transforms.RandomHorizontalFlip(),
+    transforms.ToTensor(),            
+    transforms.Normalize(mean, std),  
 ])
 
-train_dataset = datasets.CIFAR10(root='./data/cifar-10', train=True, download=True, transform=transform)
-test_dataset = datasets.CIFAR10(root='./data/cifar-10', train=False, download=True, transform=transform)
+test_transform = transforms.Compose([
+    transforms.ToTensor(),
+    transforms.Normalize(mean, std),
+])
+
+train_dataset = datasets.CIFAR10(root='./data/cifar-10', train=True, download=True, transform=train_transform)
+test_dataset = datasets.CIFAR10(root='./data/cifar-10', train=False, download=True, transform=test_transform)
 
 train_images = np.array([train_dataset[i][0].numpy() for i in range(len(train_dataset))])
 train_labels = np.array([train_dataset[i][1] for i in range(len(train_dataset))], dtype=np.int64)
