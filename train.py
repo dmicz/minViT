@@ -33,7 +33,6 @@ def get_batch(split, batch_size):
 iter_num = 0
 best_val_loss = 1e9
 
-
 print("Initializing a new model from scratch")
 config = ViTConfig()
 model = ViT(config)
@@ -62,7 +61,41 @@ for epoch in range(epochs):
 
         if _ % 10 == 0: print(f"{_}/{len(train_images) // block_size // batch_size}")
 
-    # Print statistics
-    print(f'Epoch {epoch+1}, Loss: {running_loss / (len(train_images) // block_size // batch_size)}')
+    # Calculate validation loss
+    model.eval()
+    val_loss = 0.0
+    with torch.no_grad():
+        for _ in range(len(test_images) // block_size // batch_size):
+            inputs, labels = get_batch('test', batch_size)
+
+            logits, loss = model(inputs, targets=labels)
+
+            val_loss += loss.item()
+
+    print(f'Epoch {epoch+1}, Loss: {running_loss / (len(train_images) // block_size // batch_size)}, Validation Loss: {val_loss / (len(test_images) // block_size // batch_size)}')
 
 print('Finished Training')
+
+model.eval()
+test_loss = 0.0
+correct = 0
+total = 0
+
+with torch.no_grad():
+    for _ in range(len(test_images) // block_size // batch_size):
+        inputs, labels = get_batch('test', batch_size)
+
+        logits, loss = model(inputs, targets=labels)
+
+        test_loss += loss.item()
+
+        _, predicted = torch.max(logits.data, 1)
+        total += labels.size(0)
+        correct += (predicted == labels).sum().item()
+
+accuracy = 100 * correct / total
+print(f'Test Loss: {test_loss / (len(test_images) // block_size // batch_size)}')
+print(f'Test Accuracy: {accuracy}%')
+
+print('Finished Training')
+
