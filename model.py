@@ -8,7 +8,8 @@ from torch.nn import functional as F
 # define default config for CIFAR-10
 @dataclass
 class ViTConfig:
-    img_size: int = 32
+    img_height: int = 32
+    img_width: int = 32
     patch_size: int = 4
     in_channels: int = 3
     num_classes: int = 10
@@ -18,77 +19,65 @@ class ViTConfig:
     dropout: float = 0.1
     bias: bool = True
     n_embd: int = 96
+    hybrid_embedding: bool = True
     
-# standard patch embedding, implement other module for Conv2d type embedding
+# patch embedding, with optional Conv2d implementation
 class PatchEmbedding(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.img_size   = config.img_size
-        self.patch_size = config.patch_size    # P
-        self.in_chans   = config.in_channels      # C
-        self.embed_dim  = config.n_embd     # D
+        self.img_height = config.img_height     # H
+        self.img_width  = config.img_width      # W
+        self.patch_size = config.patch_size     # P
+        self.in_chans   = config.in_channels    # C
+        self.embed_dim  = config.n_embd         # D
 
-        self.num_patches = (self.img_size // self.patch_size) ** 2        # N = H*W/P^2
+        self.hybrid_embedding = config.hybrid_embedding
+
+        self.num_patches = (self.img_height * self.img_width) // (self.patch_size ** 2)     # N = H*W/P^2
         self.flatten_dim = self.patch_size * self.patch_size * self.in_chans   # P^2*C
         
-        self.proj = nn.Linear(self.flatten_dim, self.embed_dim) # (P^2*C,D)
+        if self.hybrid_embedding:
+            self.conv = nn.Conv2d(self.in_chans, self.embed_dim, kernel_size=self.patch_size, stride=self.patch_size)
+        else:
+            self.proj = nn.Linear(self.flatten_dim, self.embed_dim) # (P^2*C,D)
 
         self.position_embed = nn.Parameter(torch.zeros(1, 1 + self.num_patches, self.embed_dim))
         self.class_embed    = nn.Parameter(torch.randn(1, 1, self.embed_dim))
 
     def forward(self, x):
         B, C, H, W = x.shape
-        x = x.unfold(2, self.patch_size, self.patch_size).unfold(3, self.patch_size, self.patch_size)
-        x = x.contiguous().view(B, C, self.num_patches, -1)
-        x = x.permute(0, 2, 1, 3).reshape(B, self.num_patches, -1)
+        assert H == self.img_height
+        assert W == self.img_width
 
-        x = self.proj(x)
+        if self.hybrid_embedding:
+            x = self.conv(x)
+            x = x.reshape([B, self.embed_dim, -1])
+            x = x.transpose(1, 2)
+        else:
+            x = x.unfold(2, self.patch_size, self.patch_size).unfold(3, self.patch_size, self.patch_size)
+            x = x.contiguous().view(B, C, self.num_patches, -1)
+            x = x.permute(0, 2, 1, 3).reshape(B, self.num_patches, -1)
+
+            x = self.proj(x)
 
         cls_emb = self.class_embed.expand(B, -1, -1)
         x = torch.cat((cls_emb, x), dim = 1)
 
         x = x + self.position_embed
         return x
-    
-class HybridPatchEmbedding(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.img_size   = config.img_size
-        self.patch_size = config.patch_size    # P
-        self.in_chans   = config.in_channels      # C
-        self.embed_dim  = config.n_embd     # D
 
-        self.num_patches = (self.img_size // self.patch_size) ** 2        # N = H*W/P^2
-        self.flatten_dim = self.patch_size * self.patch_size * self.in_chans   # P^2*C
-        
-        self.conv = nn.Conv2d(self.in_chans, self.embed_dim, kernel_size=self.patch_size, stride=self.patch_size)
-
-        self.position_embed = nn.Parameter(torch.zeros(1, 1 + self.num_patches, self.embed_dim))
-        self.class_embed    = nn.Parameter(torch.zeros(1, 1, self.embed_dim))
-
-    def forward(self, x):
-        x = self.conv(x)
-        x = x.reshape([x.shape[0], self.embed_dim, -1])
-        x = x.transpose(1, 2)
-
-        cls_emb = self.class_embed.expand(x.shape[0], -1, -1)
-        x = torch.cat((cls_emb, x), dim = 1)
-
-        x = x + self.position_embed
-        return x
-
-
+# feed-forward MLP
 class MLP(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.c_fc = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
-        self.gelu = nn.GELU()
-        self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
+        self.c_fc = nn.Linear(config.n_embd, config.mlp_dim, bias=config.bias)
+        self.relu = nn.ReLU()
+        self.c_proj = nn.Linear(config.mlp_dim, config.n_embd, bias=config.bias)
         self.dropout = nn.Dropout(config.dropout)
 
     def forward(self, x):
         x = self.c_fc(x)
-        x = self.gelu(x)
+        x = self.relu(x)
         x = self.c_proj(x)
         x = self.dropout(x)
 
@@ -110,6 +99,7 @@ class SelfAttention(nn.Module):
         self.out     = nn.Linear(config.n_embd, config.n_embd)
 
         self.attn_dropout = nn.Dropout(config.dropout)
+        self.resid_dropout = nn.Dropout(config.dropout)
 
     def forward(self, x):
         B, N, _ = x.size()
@@ -125,13 +115,12 @@ class SelfAttention(nn.Module):
         out = (attn @ v).permute(0, 2, 1, 3).contiguous().view(B, N, self.embed_dim)
         out = self.attn_dropout(out)
 
-
-        return self.out(out)
+        out = self.resid_dropout(self.out(out))
+        return out
         
 
     
 class Block(nn.Module):
-
     def __init__(self, config):
         super().__init__()
         self.ln_1 = nn.LayerNorm(config.n_embd, bias=config.bias)
@@ -147,10 +136,9 @@ class Block(nn.Module):
 class ClassificationHead(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.n_embd = config.n_embd
-        self.lin1 = nn.Linear(self.n_embd, self.n_embd * 2, bias=False)
+        self.lin1 = nn.Linear(config.n_embd, config.mlp_dim, bias=config.bias)
         self.act = nn.ReLU()
-        self.lin2 = nn.Linear(self.n_embd * 2, config.num_classes, bias=False)
+        self.lin2 = nn.Linear(config.mlp_dim, config.num_classes, bias=config.bias)
 
 
     def forward(self, x):
@@ -164,7 +152,7 @@ class ViT(nn.Module):
         super().__init__()
 
         self.transformer = nn.ModuleDict(dict(
-            pe = HybridPatchEmbedding(config),
+            pe = PatchEmbedding(config),
             drop = nn.Dropout(config.dropout),
             h = nn.ModuleList([Block(config) for _ in range(config.num_layers)]),
             ln_f = nn.LayerNorm(config.n_embd)
