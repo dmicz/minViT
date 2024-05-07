@@ -42,8 +42,13 @@ model = ViT(config)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model.to(device)
 optimizer = torch.optim.Adam(model.parameters(), lr=3e-4)
+
 batch_size = 64
-epochs = 10
+epochs = 500
+warmup_epochs = 10
+
+linear_warmup = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=1/warmup_epochs, end_factor=1.0, total_iters=warmup_epochs-1, last_epoch=-1, verbose=True)
+cos_decay = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer=optimizer, T_max=epochs-warmup_epochs, eta_min=1e-5, verbose=True)
 
 for epoch in range(epochs):
     model.train()
@@ -78,6 +83,12 @@ for epoch in range(epochs):
 
     accuracy = 100 * correct / total
     print(f'Epoch {epoch+1}, Loss: {running_loss / (len(train_images) // block_size // batch_size)}\tValidation Loss: {val_loss / (len(test_images) // block_size // batch_size)}\tValidation Accuracy: {accuracy}%')
+
+    if epoch < warmup_epochs:
+        linear_warmup.step()
+    else:
+        cos_decay.step()
+
 
 print('Finished Training')
 

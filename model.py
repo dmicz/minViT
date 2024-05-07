@@ -36,6 +36,7 @@ class PatchEmbedding(nn.Module):
         self.num_patches = (self.img_height * self.img_width) // (self.patch_size ** 2)     # N = H*W/P^2
         self.flatten_dim = self.patch_size * self.patch_size * self.in_chans   # P^2*C
         
+        # select between Conv2d and linear embedding
         if self.hybrid_embedding:
             self.conv = nn.Conv2d(self.in_chans, self.embed_dim, kernel_size=self.patch_size, stride=self.patch_size)
         else:
@@ -71,13 +72,13 @@ class MLP(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.c_fc = nn.Linear(config.n_embd, config.mlp_dim, bias=config.bias)
-        self.relu = nn.ReLU()
+        self.gelu = nn.GELU()
         self.c_proj = nn.Linear(config.mlp_dim, config.n_embd, bias=config.bias)
         self.dropout = nn.Dropout(config.dropout)
 
     def forward(self, x):
         x = self.c_fc(x)
-        x = self.relu(x)
+        x = self.gelu(x)
         x = self.c_proj(x)
         x = self.dropout(x)
 
@@ -133,6 +134,7 @@ class Block(nn.Module):
         x = x + self.mlp(self.ln_2(x))
         return x
     
+# classification head with hidden layer (for pre-training)
 class ClassificationHead(nn.Module):
     def __init__(self, config):
         super().__init__()
