@@ -42,7 +42,7 @@ class PatchEmbedding(nn.Module):
         else:
             self.proj = nn.Linear(self.flatten_dim, self.embed_dim) # (P^2*C,D)
 
-        self.position_embed = nn.Parameter(torch.zeros(1, 1 + self.num_patches, self.embed_dim))
+        self.position_embed = nn.Parameter(torch.randn(1, 1 + self.num_patches, self.embed_dim))
         self.class_embed    = nn.Parameter(torch.randn(1, 1, self.embed_dim))
 
     def forward(self, x):
@@ -56,7 +56,7 @@ class PatchEmbedding(nn.Module):
             x = x.transpose(1, 2)
         else:
             x = x.unfold(2, self.patch_size, self.patch_size).unfold(3, self.patch_size, self.patch_size)
-            x = x.contiguous().view(B, C, self.num_patches, -1)
+            x = x.reshape(1, -1, self.patch_size, self.patch_size)
             x = x.permute(0, 2, 1, 3).reshape(B, self.num_patches, -1)
 
             x = self.proj(x)
@@ -97,7 +97,7 @@ class SelfAttention(nn.Module):
         self.key     = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
         self.value   = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
 
-        self.out     = nn.Linear(config.n_embd, config.n_embd)
+        self.out     = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
 
         self.attn_dropout = nn.Dropout(config.dropout)
         self.resid_dropout = nn.Dropout(config.dropout)
@@ -113,7 +113,7 @@ class SelfAttention(nn.Module):
         attn = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(self.head_dim))
         attn = attn.softmax(dim=-1)
 
-        out = (attn @ v).permute(0, 2, 1, 3).contiguous().view(B, N, self.embed_dim)
+        out = (attn @ v).permute(0, 2, 1, 3).reshape(B, N, self.embed_dim)
         out = self.attn_dropout(out)
 
         out = self.resid_dropout(self.out(out))
