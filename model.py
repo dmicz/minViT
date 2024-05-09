@@ -19,10 +19,9 @@ class ViTConfig:
     dropout: float = 0.1
     bias: bool = True
     n_embd: int = 96
-    hybrid_embedding: bool = True
     pretraining: bool = False
     
-# patch embedding, with optional Conv2d implementation
+# patch embedding with no conv2d
 class PatchEmbedding(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -31,8 +30,6 @@ class PatchEmbedding(nn.Module):
         self.patch_size = config.patch_size     # P
         self.in_chans   = config.in_channels    # C
         self.embed_dim  = config.n_embd         # D
-
-        self.hybrid_embedding = config.hybrid_embedding
 
         self.num_patches = (self.img_height * self.img_width) // (self.patch_size ** 2)     # N = H*W/P^2
         self.flatten_dim = self.patch_size * self.patch_size * self.in_chans   # P^2*C
@@ -43,9 +40,7 @@ class PatchEmbedding(nn.Module):
         self.class_embed    = nn.Parameter(torch.randn(1, 1, self.embed_dim))
 
     def forward(self, x):
-        B, C, H, W = x.shape
-        assert H == self.img_height
-        assert W == self.img_width
+        B = x.shape[0]
 
         x = x.unfold(2, self.patch_size, self.patch_size).unfold(3, self.patch_size, self.patch_size)
         x = x.reshape(1, -1, self.patch_size, self.patch_size)
@@ -69,8 +64,6 @@ class HybridPatchEmbedding(nn.Module):
         self.in_chans   = config.in_channels    # C
         self.embed_dim  = config.n_embd         # D
 
-        self.hybrid_embedding = config.hybrid_embedding
-
         self.num_patches = (self.img_height * self.img_width) // (self.patch_size ** 2)     # N = H*W/P^2
         self.flatten_dim = self.patch_size * self.patch_size * self.in_chans   # P^2*C
         
@@ -80,12 +73,10 @@ class HybridPatchEmbedding(nn.Module):
         self.class_embed    = nn.Parameter(torch.randn(1, 1, self.embed_dim))
 
     def forward(self, x):
-        B, C, H, W = x.shape
-        assert H == self.img_height
-        assert W == self.img_width
+        B = x.shape[0]
 
         x = self.conv(x)
-        x = x.reshape([B, self.embed_dim, -1])
+        x = x.reshape(B, self.embed_dim, -1)
         x = x.transpose(1, 2)
 
         cls_emb = self.class_embed.expand(B, -1, -1)
