@@ -159,7 +159,7 @@ class ClassificationHead(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.pretraining = config.pretraining
-        self.head = nn.ModuleList()
+        self.head = nn.Sequential()
         if self.pretraining:
             self.head.append(nn.Linear(config.n_embd, config.mlp_dim, bias=config.bias))
             self.head.append(nn.ReLU())
