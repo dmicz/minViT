@@ -20,6 +20,7 @@ class ViTConfig:
     bias: bool = True
     n_embd: int = 96
     pretraining: bool = False
+    hybrid_embedding: bool = True
     
 # patch embedding with no conv2d
 class PatchEmbedding(nn.Module):
